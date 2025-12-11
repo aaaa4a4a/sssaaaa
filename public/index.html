@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 关键：viewport-fit=cover 适配刘海屏，禁止用户缩放 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>SillyTavern 多人联机</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #1a1b26;
+            --panel-bg: #24283b;
+            --text-color: #c0caf5;
+            --accent-color: #7aa2f7;
+            --border-color: #414868;
+            --msg-user-bg: #3d59a1;
+            --msg-bot-bg: #292e42;
+            --msg-team-bg: #414868;
+            --disabled-bg: #565f89;
+            --input-bg: #16161e;
+
+            /* --- 新增：兼容 SillyTavern 记忆表格的变量 --- */
+            /* 如果不加这些，抓取过来的表格可能会看不清文字或边框 */
+            --SmartThemeBodyColor: #565f89; /* 表格边框颜色 */
+            --SmartThemeEmColor: #c0caf5;   /* 强调文字颜色 */
+            --SmartThemeQuoteColor: #9ece6a; 
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            height: 100dvh; 
+            overflow: hidden;
+            width: 100%;
+            position: fixed;
+            font-size: 14px;
+        }
+
+        /* Login Modal */
+        #login-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            padding: 20px;
+        }
+
+        #login-box {
+            background: var(--panel-bg);
+            padding: 2rem;
+            border-radius: 16px;
+            text-align: center;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 100%;
+            max-width: 320px;
+        }
+
+        #login-box h2 { margin-top: 0; color: var(--accent-color); font-size: 1.5rem; }
+
+        #login-box input {
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--input-bg);
+            color: var(--text-color);
+            margin-bottom: 1.5rem;
+            width: 100%;
+            font-size: 16px;
+            outline: none;
+        }
+
+        #login-box button {
+            padding: 10px 0;
+            border-radius: 8px;
+            border: none;
+            background: var(--accent-color);
+            color: #fff;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            font-size: 1rem;
+        }
+
+        #login-error { color: #f7768e; margin-top: 15px; font-size: 0.9em; }
+
+        /* Main Layout */
+        #main-container {
+            display: grid;
+            grid-template-columns: 260px 1fr 1fr 1fr;
+            grid-template-rows: minmax(0, 1fr);
+            height: 100vh;
+            height: 100dvh;
+            overflow: hidden;
+            display: none;
+        }
+
+        /* --- Mobile Optimization --- */
+        @media (max-width: 768px) {
+            #main-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: minmax(0, 1fr) calc(50px + env(safe-area-inset-bottom));
+            }
+            .drawer, #team-panel, #ai-panel, #status-panel { display: none; }
+            
+            #team-panel.active, #ai-panel.active, #drawer.active, #status-panel.active {
+                display: flex !important;
+                width: 100% !important;
+                height: 100%;
+            }
+
+            .tab-bar {
+                display: flex;
+                background: var(--panel-bg);
+                border-top: 1px solid var(--border-color);
+                grid-row: 2;
+                justify-content: space-around;
+                align-items: center;
+                z-index: 100;
+                padding-bottom: env(safe-area-inset-bottom);
+                height: calc(50px + env(safe-area-inset-bottom));
+            }
+            .tab-item {
+                flex: 1;
+                text-align: center;
+                cursor: pointer;
+                color: var(--text-color);
+                font-size: 10px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                opacity: 0.6;
+                height: 100%;
+            }
+            .tab-item.active { color: var(--accent-color); opacity: 1; }
+            .tab-icon { font-size: 18px; margin-bottom: 2px; }
+
+            .panel-header {
+                padding: 10px !important;
+                font-size: 15px !important;
+                height: 44px;
+                display: flex; align-items: center; justify-content: center;
+            }
+            
+            .input-area { padding: 8px 10px !important; min-height: 50px; }
+            .input-area input { padding: 8px 12px !important; height: 36px; font-size: 16px; }
+
+            .message {
+                padding: 8px 12px !important;
+                border-radius: 12px !important;
+                font-size: 15px !important;
+                max-width: 88% !important;
+            }
+            .chat-history { padding: 10px !important; gap: 8px !important; }
+        }
+
+        @media (min-width: 769px) {
+            .tab-bar { display: none; }
+            body { font-size: 16px; } 
+        }
+
+        /* Drawer Styles */
+        .drawer {
+            background: #16161e;
+            border-right: 1px solid var(--border-color);
+            display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden;
+        }
+
+        .drawer-header {
+            padding: 15px; border-bottom: 1px solid var(--border-color);
+            text-align: center; background: var(--panel-bg);
+        }
+        .drawer-header h3 { margin: 0 0 10px 0; color: var(--accent-color); font-size: 1.1rem; }
+
+        .my-card-preview {
+            cursor: pointer; padding: 10px; border-radius: 8px;
+            background: var(--bg-color); border: 1px solid transparent;
+        }
+
+        .user-list { flex: 1; padding: 10px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+        .user-item {
+            display: flex; align-items: center; padding: 10px; margin-bottom: 6px;
+            border-radius: 8px; cursor: pointer; background: rgba(255,255,255,0.02);
+        }
+        
+        .user-avatar {
+            width: 36px; height: 36px; border-radius: 50%; background: #333;
+            margin-right: 10px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border-color);
+        }
+        .user-name { font-size: 0.9rem; font-weight: 600; }
+        .user-status { font-size: 0.75rem; color: #73daca; display: flex; align-items: center; gap: 4px; }
+        .status-dot { width: 6px; height: 6px; background: #9ece6a; border-radius: 50%; }
+
+        /* Panel Structure */
+        .panel {
+            display: flex; flex-direction: column; border-right: 1px solid var(--border-color);
+            height: 100%; min-height: 0; background: var(--bg-color); position: relative; overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 15px; background: var(--panel-bg); border-bottom: 1px solid var(--border-color);
+            font-weight: bold; text-align: center; font-size: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); z-index: 10;
+        }
+
+        .chat-history {
+            flex: 1; overflow-y: auto; padding: 15px; display: flex;
+            flex-direction: column; gap: 12px; scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+        }
+
+        /* --- Status Panel (表格样式修正) --- */
+        .status-container {
+            padding: 10px;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            height: 100%;
+        }
+
+        /* 强制抓取过来的表格宽度自适应 */
+        .status-container table {
+            width: 100% !important;
+            max-width: 100% !important;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+            font-size: 0.9em; /* 表格字体稍微小一点以便显示 */
+        }
+        /* 强制单元格样式，覆盖可能的行内样式 */
+        .status-container td, .status-container th {
+            border: 1px solid var(--border-color) !important;
+            padding: 4px !important;
+        }
+        /* 隐藏掉一些不需要的元素，比如空行 */
+        .status-container hr {
+            border: 0; border-top: 1px solid var(--border-color); margin: 10px 0;
+        }
+        .status-container h3 {
+            margin: 10px 0 5px 0; color: var(--accent-color); font-size: 1em;
+        }
+
+        /* Input Area */
+        .input-area {
+            padding: 12px 15px; background: var(--panel-bg); border-top: 1px solid var(--border-color);
+            display: flex; gap: 8px; flex-shrink: 0; align-items: center;
+        }
+        .input-area input {
+            flex: 1; padding: 10px 15px; border-radius: 20px; border: 1px solid var(--border-color);
+            background: var(--input-bg); color: var(--text-color); outline: none; transition: all 0.2s; font-size: 1rem;
+        }
+        .input-area input:focus { border-color: var(--accent-color); background: #1f2335; }
+        .input-area input:disabled { background-color: var(--disabled-bg); opacity: 0.7; }
+
+        /* Message Bubbles */
+        .message {
+            padding: 10px 14px; border-radius: 14px; max-width: 88%; word-wrap: break-word;
+            line-height: 1.45; position: relative; font-size: 0.95rem; box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .message .sender { font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; opacity: 0.7; }
+
+        .ai-msg { background: var(--msg-bot-bg); align-self: flex-start; border-bottom-left-radius: 2px; }
+        .user-msg { background: var(--msg-user-bg); align-self: flex-end; border-bottom-right-radius: 2px; }
+        .team-msg { background: var(--msg-team-bg); align-self: flex-start; border-bottom-left-radius: 2px; }
+        .team-msg.self { background: var(--accent-color); color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }
+
+        .msg-system {
+            background: rgba(255, 255, 0, 0.05) !important; border-left: 3px solid #e0af68;
+            font-style: italic; width: 100%; max-width: 100%; border-radius: 4px;
+            padding: 8px 12px; font-size: 0.85rem !important;
+        }
+        .msg-command {
+            font-family: monospace; background: rgba(0,0,0,0.2); align-self: center;
+            font-size: 0.8rem !important; padding: 6px 10px; border-radius: 6px;
+        }
+
+        /* Modal */
+        .modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 2000; justify-content: center; align-items: center;
+            backdrop-filter: blur(5px); padding: 20px;
+        }
+        .modal-content {
+            background: var(--panel-bg); padding: 20px; border-radius: 12px; width: 400px;
+            max-width: 100%; border: 1px solid var(--border-color); box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+            max-height: 85vh; overflow-y: auto;
+        }
+        .modal-content h2 { margin-top: 0; color: var(--accent-color); font-size: 1.2rem; margin-bottom: 15px;}
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 6px; font-weight: bold; font-size: 0.9rem; color: var(--text-color); }
+        .form-group input, .form-group textarea {
+            width: 100%; padding: 10px; background: var(--input-bg);
+            border: 1px solid var(--border-color); color: var(--text-color);
+            border-radius: 6px; outline: none; font-family: inherit; font-size: 16px;
+        }
+        .modal-actions { text-align: right; margin-top: 20px; }
+        .modal-actions button {
+            margin-left: 8px; padding: 8px 16px; border-radius: 6px; border: none;
+            cursor: pointer; font-weight: bold; font-size: 0.9rem;
+        }
+        .btn-cancel { background: var(--disabled-bg); color: #fff; }
+        .btn-save { background: var(--accent-color); color: #fff; }
+
+        /* Markdown */
+        .markdown-body { font-size: 0.95em; line-height: 1.5; }
+        .markdown-body p { margin-bottom: 6px; }
+        .table-wrapper { width: 100%; overflow-x: auto; margin-bottom: 8px; }
+        
+        .markdown-body pre {
+            background: #1a1b26; padding: 10px; border-radius: 6px;
+            overflow-x: auto; border: 1px solid var(--border-color); margin: 6px 0;
+        }
+        .markdown-body code {
+            font-family: Consolas, monospace; background: rgba(122, 162, 247, 0.1);
+            padding: 1px 4px; border-radius: 3px; color: #7aa2f7; font-size: 0.9em; word-break: break-all;
+        }
+        .markdown-body pre code { word-break: normal; }
+
+        details.thought-details {
+            margin-bottom: 8px; background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px; border: 1px solid rgba(125, 207, 255, 0.2);
+        }
+        details.thought-details summary {
+            padding: 6px 10px; color: #7dcfff; font-size: 0.8em; font-weight: bold;
+        }
+        .thought-content {
+            padding: 8px 12px; font-size: 0.85em; color: #a9b1d6; font-style: italic; white-space: pre-wrap;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 2px; }
+    </style>
+</head>
+<body>
+
+    <!-- Login Modal -->
+    <div id="login-overlay">
+        <div id="login-box">
+            <h2>加入酒馆</h2>
+            <input type="text" id="username-input" placeholder="输入昵称" autofocus>
+            <br>
+            <button onclick="login()">进入</button>
+            <div id="login-error"></div>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div id="main-container">
+        <!-- Drawer -->
+        <div id="drawer" class="drawer">
+            <div class="drawer-header">
+                <h3>我的名片</h3>
+                <div id="my-card-preview" class="my-card-preview" onclick="openProfileModal()">
+                    <div style="display:flex; align-items:center;">
+                        <img id="my-avatar-preview" src="" class="user-avatar" style="display:none;">
+                        <span id="my-name-preview">点击设置角色</span>
+                    </div>
+                </div>
+            </div>
+            <div style="padding:12px 15px 5px; font-weight:bold; color:var(--accent-color); font-size:0.8rem; opacity:0.8;">在线成员</div>
+            <div class="user-list" id="user-list"></div>
+        </div>
+
+        <!-- Team Panel -->
+        <div class="panel active" id="team-panel">
+            <div class="panel-header">小队聊天</div>
+            <div class="chat-history" id="team-history"></div>
+            <div class="input-area">
+                <input type="text" id="team-input" placeholder="发送消息...">
+            </div>
+        </div>
+
+        <!-- Status Panel (这里会渲染抓取到的表格) -->
+        <div class="panel" id="status-panel">
+            <div class="panel-header">状态面板</div>
+            <div class="status-container" id="status-content">
+                <div style="text-align:center; width:100%; color:#565f89; font-size:0.9em; margin-top:20px;">等待同步...</div>
+            </div>
+        </div>
+
+        <!-- AI Panel -->
+        <div class="panel" id="ai-panel">
+            <div class="panel-header">AI 剧情</div>
+            <div class="chat-history" id="ai-history"></div>
+            <div class="input-area">
+                <input type="text" id="ai-input" placeholder="发送给 AI...">
+            </div>
+        </div>
+
+        <!-- Mobile Tab Bar -->
+        <div class="tab-bar">
+            <div class="tab-item" onclick="switchTab('drawer')" id="tab-drawer">
+                <div class="tab-icon">👥</div>
+                <span>成员</span>
+            </div>
+            <div class="tab-item active" onclick="switchTab('team-panel')" id="tab-team">
+                <div class="tab-icon">💬</div>
+                <span>小队</span>
+            </div>
+            <div class="tab-item" onclick="switchTab('status-panel')" id="tab-status">
+                <div class="tab-icon">📊</div>
+                <span>状态</span>
+            </div>
+            <div class="tab-item" onclick="switchTab('ai-panel')" id="tab-ai">
+                <div class="tab-icon">🤖</div>
+                <span>AI</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals (Profile) -->
+    <div id="profile-modal" class="modal">
+        <div class="modal-content">
+            <h2>编辑资料</h2>
+            <div class="form-group">
+                <label>角色名称</label>
+                <input type="text" id="profile-name" placeholder="您的角色名">
+            </div>
+            <div class="form-group">
+                <label>头像链接</label>
+                <input type="text" id="profile-avatar" placeholder="https://... 或 data:image/...">
+            </div>
+            <div class="form-group">
+                <label>简介 / 状态</label>
+                <textarea id="profile-desc" rows="4" placeholder="写点什么..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeProfileModal()">取消</button>
+                <button class="btn-save" onclick="saveProfile()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-profile-modal" class="modal">
+        <div class="modal-content">
+            <div style="text-align:center; margin-bottom:15px;">
+                <img id="view-avatar" src="" style="width:80px; height:80px; border-radius:50%; object-fit:cover; background:#333; border: 2px solid var(--accent-color);">
+                <h2 id="view-name" style="margin:10px 0 5px 0; font-size:1.1rem;"></h2>
+            </div>
+            <div style="max-height: 250px; overflow-y: auto; background: var(--bg-color); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color);">
+                <p id="view-desc" style="white-space: pre-wrap; margin: 0; color: var(--text-color); line-height: 1.5; font-size:0.9rem;"></p>
+            </div>
+            <div class="modal-actions" style="margin-top: 15px; text-align: center;">
+                <button class="btn-cancel" onclick="document.getElementById('view-profile-modal').style.display='none'" style="width:100%; margin:0;">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let lastAiHistoryStr = '';
+        let lastTeamHistoryLen = -1;
+        let lastStatusHtml = ''; // 记录上一次的状态 HTML，防止重复刷新
+        let isAiSending = false;
+        let isTeamSending = false;
+        let userProfiles = {};
+
+        const aiInput = document.getElementById('ai-input');
+        const teamInput = document.getElementById('team-input');
+        const usernameInput = document.getElementById('username-input');
+
+        // --- Mobile Tab Switching ---
+        function switchTab(tabId) {
+            document.getElementById('drawer').classList.remove('active');
+            document.getElementById('team-panel').classList.remove('active');
+            document.getElementById('ai-panel').classList.remove('active');
+            document.getElementById('status-panel').classList.remove('active');
+
+            document.getElementById(tabId).classList.add('active');
+
+            document.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
+            if (tabId === 'drawer') document.getElementById('tab-drawer').classList.add('active');
+            if (tabId === 'team-panel') document.getElementById('tab-team').classList.add('active');
+            if (tabId === 'status-panel') document.getElementById('tab-status').classList.add('active');
+            if (tabId === 'ai-panel') document.getElementById('tab-ai').classList.add('active');
+        }
+
+        // --- Login Logic ---
+        async function login() {
+            const username = usernameInput.value.trim();
+            if (!username) return;
+
+            try {
+                const res = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    currentUser = username;
+
+                    if (data.profile) {
+                        updateMyProfilePreview(data.profile);
+                    }
+
+                    document.getElementById('login-overlay').style.display = 'none';
+                    document.getElementById('main-container').style.display = 'grid';
+                    startPolling();
+                } else {
+                    const err = await res.text();
+                    document.getElementById('login-error').innerText = err;
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('login-error').innerText = '连接错误: ' + e.message;
+            }
+        }
+
+        usernameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') login();
+        });
+
+        // --- Polling Logic ---
+        function startPolling() {
+            fetchProfiles();
+
+            setInterval(() => {
+                fetchHeartbeat();
+                fetchAiChat();
+                fetchTeamChat();
+                fetchProfiles();
+                // fetchGameState(); // 删除了这个，因为现在数据在 fetchAiChat 里一起过来了
+            }, 1000);
+        }
+
+        async function fetchHeartbeat() {
+            try {
+                await fetch('/heartbeat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: currentUser })
+                });
+            } catch (e) { }
+        }
+
+        async function fetchProfiles() {
+            try {
+                const res = await fetch('/get-profiles');
+                if (!res.ok) return;
+                const profiles = await res.json();
+                userProfiles = profiles;
+                renderUserList(profiles);
+
+                if (profiles[currentUser]) {
+                    updateMyProfilePreview(profiles[currentUser]);
+                }
+            } catch (e) {
+                console.error("Fetch profiles error", e);
+            }
+        }
+
+        // --- 核心修改：同时获取聊天记录和状态表格 ---
+        async function fetchAiChat() {
+            try {
+                const res = await fetch('/get-chat');
+                if (!res.ok) return;
+                
+                const data = await res.json();
+                
+                // 兼容旧版（数组）和新版（对象）
+                let chatHistory = [];
+                let statusHtml = '';
+
+                if (Array.isArray(data)) {
+                    // 旧版本，只有聊天
+                    chatHistory = data;
+                } else if (data && typeof data === 'object') {
+                    // 新版本，有 chat 和 extra_html
+                    chatHistory = data.chat || [];
+                    statusHtml = data.extra_html || '';
+                }
+
+                // 1. 渲染聊天
+                const str = JSON.stringify(chatHistory);
+                if (str !== lastAiHistoryStr) {
+                    lastAiHistoryStr = str;
+                    renderAiChat(chatHistory);
+                }
+
+                // 2. 渲染状态表格
+                if (statusHtml !== lastStatusHtml) {
+                    lastStatusHtml = statusHtml;
+                    renderStatusPanel(statusHtml);
+                }
+
+            } catch (e) {
+                console.error("AI Chat fetch error", e);
+            }
+        }
+
+        async function fetchTeamChat() {
+            try {
+                const res = await fetch('/get-team-chat');
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.length !== lastTeamHistoryLen) {
+                    lastTeamHistoryLen = data.length;
+                    renderTeamChat(data);
+                }
+            } catch (e) {
+                console.error("Team Chat fetch error", e);
+            }
+        }
+
+        // --- 新增：渲染状态面板 ---
+        function renderStatusPanel(html) {
+            const container = document.getElementById('status-content');
+            
+            if (!html || html.trim() === '') {
+                // 如果没有数据，且之前也是空的，显示等待
+                // 如果之前有数据，现在没了（可能是出错了），暂时不清除，保持最后状态
+                if (container.innerHTML.includes('等待同步')) {
+                    // keep showing waiting
+                } else {
+                     // container.innerHTML = '<div style="text-align:center; color:#565f89; margin-top:20px;">状态暂不可用</div>';
+                }
+                return;
+            }
+
+            // 直接注入抓取到的 HTML
+            container.innerHTML = html;
+        }
+
+        // --- Rendering ---
+        function updateMyProfilePreview(profile) {
+            const img = document.getElementById('my-avatar-preview');
+            const name = document.getElementById('my-name-preview');
+            if (profile.avatar) {
+                img.src = profile.avatar;
+                img.style.display = 'block';
+            } else {
+                img.style.display = 'none';
+            }
+            name.innerText = profile.name || currentUser;
+        }
+
+        function renderUserList(profiles) {
+            const container = document.getElementById('user-list');
+            if (!profiles) return;
+            const users = Object.keys(profiles).sort();
+            if (users.length === 0) {
+                container.innerHTML = '<div style="padding:20px; text-align:center; color:#565f89; font-size:0.9em;">暂无其他成员</div>';
+                return;
+            }
+            container.innerHTML = users.map(u => {
+                const p = profiles[u];
+                const avatarSrc = p.avatar || '';
+                const hasAvatar = !!avatarSrc;
+                return `
+                <div class="user-item" onclick="viewProfile('${u}')">
+                    ${hasAvatar ? `<img src="${avatarSrc}" class="user-avatar">` : '<div class="user-avatar" style="width:36px; height:36px; border-radius:50%; background:#333; margin-right:10px; display:flex; align-items:center; justify-content:center; border:1px solid var(--border-color); font-size:1.2em;">👤</div>'}
+                    <div class="user-info">
+                        <div class="user-name">${p.name || u} ${u === currentUser ? '(你)' : ''}</div>
+                        <div class="user-status"><div class="status-dot"></div> 在线</div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        function renderAiChat(messages) {
+            const container = document.getElementById('ai-history');
+
+            const previousScrollHeight = container.scrollHeight;
+            const previousScrollTop = container.scrollTop;
+            const clientHeight = container.clientHeight;
+            const wasAtBottom = (previousScrollHeight - previousScrollTop) <= (clientHeight + 50);
+
+            container.innerHTML = '';
+            if (!Array.isArray(messages)) return;
+
+            messages.forEach(msg => {
+                const div = document.createElement('div');
+                const isUser = msg.is_user;
+                div.className = `message ${isUser ? 'user-msg' : 'ai-msg'}`;
+
+                const sender = document.createElement('div');
+                sender.className = 'sender';
+                sender.innerText = msg.name;
+
+                div.appendChild(sender);
+
+                let content = msg.mes || "";
+                if (typeof content !== 'string') content = String(content);
+
+                content = content.replace(/^\[(.*?)\]:/g, '**[$1]**:');
+                // 处理思维链标签
+                content = content.replace(/<think>([\s\S]*?)<\/think>/gi,
+                    '<details class="thought-details"><summary>思考过程</summary><div class="thought-content">$1</div></details>');
+                content = content.replace(/<think>([\s\S]*?)$/gi,
+                    '<details class="thought-details" open><summary>思考中...</summary><div class="thought-content">$1</div></details>');
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'markdown-body';
+
+                let renderer = new marked.Renderer();
+                renderer.table = function(header, body) {
+                    return '<div class="table-wrapper"><table><thead>' + header + '</thead><tbody>' + body + '</tbody></table></div>';
+                };
+
+                if (typeof marked !== 'undefined') {
+                    contentDiv.innerHTML = marked.parse(content, { renderer: renderer });
+                } else {
+                    contentDiv.innerHTML = content.replace(/\*(.*?)\*/g, '<i>$1</i>').replace(/\n/g, '<br>');
+                }
+                div.appendChild(contentDiv);
+                container.appendChild(div);
+            });
+
+            if (wasAtBottom) {
+                container.scrollTop = container.scrollHeight;
+            } else if (previousScrollHeight > 0) {
+                 container.scrollTop = previousScrollTop;
+            }
+        }
+
+        function renderTeamChat(messages) {
+            const container = document.getElementById('team-history');
+
+            const previousScrollHeight = container.scrollHeight;
+            const previousScrollTop = container.scrollTop;
+            const clientHeight = container.clientHeight;
+            const wasAtBottom = (previousScrollHeight - previousScrollTop) <= (clientHeight + 50);
+
+            container.innerHTML = '';
+            if (!Array.isArray(messages)) return;
+
+            messages.forEach(msg => {
+                const div = document.createElement('div');
+
+                if (msg.isSystem) {
+                    div.className = 'message msg-system';
+                    div.innerHTML = `<div>${msg.message}</div>`;
+                } else if (msg.isCommand) {
+                    div.className = 'message msg-command';
+                    div.innerHTML = `<div>${msg.username}: ${msg.message}</div>`;
+                } else {
+                    const isSelf = msg.username === currentUser;
+                    div.className = `message team-msg ${isSelf ? 'self' : ''}`;
+                    const sender = document.createElement('div');
+                    sender.className = 'sender';
+                    sender.innerText = msg.username;
+                    div.appendChild(sender);
+                    const contentDiv = document.createElement('div');
+                    contentDiv.innerText = msg.message;
+                    div.appendChild(contentDiv);
+                }
+                container.appendChild(div);
+            });
+
+            if (wasAtBottom) {
+                container.scrollTop = container.scrollHeight;
+            } else if (previousScrollHeight > 0) {
+                 container.scrollTop = previousScrollTop;
+            }
+        }
+
+        // --- Profile Management ---
+        function openProfileModal() {
+            const modal = document.getElementById('profile-modal');
+            const p = userProfiles[currentUser] || {};
+            document.getElementById('profile-name').value = p.name || currentUser;
+            document.getElementById('profile-avatar').value = p.avatar || '';
+            document.getElementById('profile-desc').value = p.description || '';
+            modal.style.display = 'flex';
+        }
+        function closeProfileModal() {
+            document.getElementById('profile-modal').style.display = 'none';
+        }
+        async function saveProfile() {
+            const name = document.getElementById('profile-name').value.trim();
+            const avatar = document.getElementById('profile-avatar').value.trim();
+            const description = document.getElementById('profile-desc').value.trim();
+            if (!name) return alert("请输入角色名称");
+            try {
+                await fetch('/update-profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: currentUser, name, avatar, description })
+                });
+                closeProfileModal();
+                fetchProfiles();
+            } catch (e) {
+                alert("保存失败: " + e.message);
+            }
+        }
+        function viewProfile(username) {
+            const p = userProfiles[username];
+            if (!p) return;
+            document.getElementById('view-name').innerText = p.name;
+            const img = document.getElementById('view-avatar');
+            if (p.avatar) {
+                img.src = p.avatar;
+                img.style.display = 'inline-block';
+            } else {
+                img.style.display = 'none';
+            }
+            document.getElementById('view-desc').innerText = p.description || "暂无简介";
+            document.getElementById('view-profile-modal').style.display = 'flex';
+        }
+
+        // --- Sending Messages ---
+        aiInput.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                if (isAiSending) return;
+                const message = aiInput.value.trim();
+                if (!message) return;
+                isAiSending = true;
+                aiInput.disabled = true;
+                const originalPlaceholder = aiInput.placeholder;
+                aiInput.placeholder = "发送中...";
+                aiInput.value = '';
+                try {
+                    await fetch('/queue-message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message, name: currentUser })
+                    });
+                } catch (e) {
+                    console.error("Send AI error", e);
+                    aiInput.value = message;
+                } finally {
+                    setTimeout(() => {
+                        isAiSending = false;
+                        aiInput.disabled = false;
+                        aiInput.placeholder = originalPlaceholder;
+                        aiInput.focus();
+                    }, 2000);
+                }
+            }
+        });
+
+        teamInput.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                if (isTeamSending) return;
+                const message = teamInput.value.trim();
+                if (!message) return;
+                isTeamSending = true;
+                teamInput.disabled = true;
+                const originalPlaceholder = teamInput.placeholder;
+                teamInput.placeholder = "发送中...";
+                teamInput.value = '';
+                try {
+                    await fetch('/send-team-chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: currentUser, message })
+                    });
+                    fetchTeamChat();
+                } catch (e) {
+                    console.error("Send Team error", e);
+                    teamInput.value = message;
+                } finally {
+                    isTeamSending = false;
+                    teamInput.disabled = false;
+                    teamInput.placeholder = originalPlaceholder;
+                    teamInput.focus();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
